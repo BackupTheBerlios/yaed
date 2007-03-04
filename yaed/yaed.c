@@ -20,14 +20,17 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <ncurses.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <termios.h>
+
+#define VERSION		"0.14"
 
 typedef struct {
 	char *buf;
 	int len, allocated;
 } line_t;
 
-line_t *lines = 0;
+line_t *lines = NULL;
 int line_count = 0, line_allocated = 0;
 int cursor_x = 0, cursor_y = 0, scroll_y = 0;
 
@@ -106,6 +109,8 @@ void drawline(int y)
 		in_select = 1;
 	else
 		in_select = 0;
+	
+	/* TODO: proper highlighting system */
 	
 	in_comment = 0;
 	in_string = 0;
@@ -373,7 +378,7 @@ void insertline(int y)
 	memmove(&lines[y+1], &lines[y], sizeof(line_t) * (line_count-y-1));
 	
 	/* init line */
-	lines[y].buf = 0;
+	lines[y].buf = NULL;
 	lines[y].len = 0;
 	lines[y].allocated = 0;
 	
@@ -543,7 +548,7 @@ void drawmenu()
 	attron(COLOR_PAIR(3));
 	attron(A_BOLD);
 	
-	mvaddstr(0, 0, " YAE v0.14 | F5 Help  F6 Save  F8 Quit! ");
+	mvaddstr(0, 0, " YAED " VERSION " | F5 Help  F6 Save  F8 Quit! ");
 	clrtoeol();
 	
 	attron(COLOR_PAIR(2));
@@ -928,12 +933,12 @@ int process_key()
 		/* fall trought */
 	
 	default:
-		if((ch >= ' ' && ch < 255) || ch == '\t')
+		if((ch >= ' ' && ch < 256) || ch == '\t')
 		{
 			unsigned char buf = ch;
 			
 			/* insert character */
-			inserttext(cursor_x, cursor_y, &buf, 1);
+			inserttext(cursor_x, cursor_y, (const char *)&buf, 1);
 			cursor_x++;
 		}
 		break;
@@ -972,6 +977,7 @@ int main(int argc, char **argv)
 	
 	tcgetattr(0, &term_saved);
 	
+	/* initialize curses */
 	screen = initscr();
 	cbreak();
 	nonl();
@@ -979,12 +985,14 @@ int main(int argc, char **argv)
 	
 	keypad(screen, TRUE);
 	
+	/* modify terminal settings */
 	tcgetattr(0, &term);
 	term.c_lflag &= ~(IEXTEN | ISIG);
 	term.c_iflag &= ~IXON;
 	term.c_oflag &= ~OPOST;	
 	tcsetattr(0, TCSANOW, &term);
 	
+	/* setup colors */
 	start_color();
 	init_pair(1, COLOR_YELLOW, COLOR_BLACK);
 	init_pair(2, COLOR_WHITE, COLOR_BLACK);
@@ -994,6 +1002,7 @@ int main(int argc, char **argv)
 	init_pair(6, COLOR_BLUE, COLOR_BLACK);
 	init_pair(7, COLOR_BLACK, COLOR_BLACK);
 	attron(COLOR_PAIR(2));
+	
 	getmaxyx(screen, h, w);
 	
 	fastmode = 0;
@@ -1002,9 +1011,9 @@ int main(int argc, char **argv)
 	drawscreen();
 	drawpos();
 	setcursor();
-	
 	refresh();
 	
+	/* main loop */
 	for(;;)
 	{
 		if(process_key())
@@ -1013,6 +1022,7 @@ int main(int argc, char **argv)
 	
 	endwin();
 	
+	/* revert terminal settings */
 	tcsetattr(0, TCSANOW, &term_saved);
 	
 	return 0;
