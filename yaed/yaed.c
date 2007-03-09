@@ -49,7 +49,7 @@ typedef struct {
 	int sel_end_x, sel_end_y;
 } file_t;
 
-/*file_t *files[MAXFILES];*/
+file_t *files[MAXFILES] = {NULL, };
 
 WINDOW *screen;
 int w, h;
@@ -59,17 +59,20 @@ int show_linenumbers = 1;
 int tab_size = 1;
 int c_highlight = 1;
 
-file_t *current = NULL;
+int current = 0;
 
 void setcursor()
 {
 	int i, x;
+	file_t *file;
 	line_t *line;
 	
-	line = &current->lines[current->cursor_y];
+	file = files[current];
+	
+	line = &file->lines[file->cursor_y];
 	
 	x = 0;
-	for(i=0; i<current->cursor_x; i++)
+	for(i=0; i<file->cursor_x; i++)
 	{
 		if((x >= w-7 && show_linenumbers) || (x >= w-1 && !show_linenumbers))
 		{
@@ -90,7 +93,7 @@ void setcursor()
 	
 	if(show_linenumbers)
 		x += 6;
-	move(current->cursor_y - current->scroll_y + 1, x);
+	move(file->cursor_y - file->scroll_y + 1, x);
 }
 
 /* draw one line to screen */
@@ -100,7 +103,8 @@ void drawline(file_t *file, int y)
 	int i, len, x, in_select, in_comment, in_string;
 	line_t *line;
 	
-	if(file != current || y < file->scroll_y || y >= file->scroll_y + h-1)
+	if(!(current >= 0 && file == files[current])
+	|| y < file->scroll_y || y >= file->scroll_y + h-1)
 	{
 		/* not visible */
 		return;
@@ -365,11 +369,14 @@ void drawline(file_t *file, int y)
 void drawscreen()
 {
 	int y;
+	file_t *file;
+	
+	file = files[current];
 	
 	for(y=0; y<h-1; y++)
 	{
-		if(y + current->scroll_y < current->line_count)
-			drawline(current, y + current->scroll_y);
+		if(y + file->scroll_y < file->line_count)
+			drawline(file, y + file->scroll_y);
 		else
 		{
 			/* clear line */
@@ -377,6 +384,41 @@ void drawscreen()
 			clrtoeol();
 		}
 	}
+}
+
+int newfile()
+{
+	file_t *file;
+	int i;
+	
+	/* find empty slot */
+	for(i=0; i<MAXFILES; i++)
+	{
+		if(!files[i])
+		{
+			file = malloc(sizeof(file_t));
+			
+			/* initialize file */
+			
+			file->filename[0] = 0;
+			
+			file->lines = NULL;
+			file->line_count = 0;
+			file->line_allocated = 0;
+			
+			file->cursor_x = 0;
+			file->cursor_y = 0;
+			file->scroll_y = 0;
+			
+			file->selected = 0;
+			
+			files[i] = file;
+			
+			return i;
+		}
+	}
+	
+	return -1;
 }
 
 /* insert line at y. also updates screen and moves cursor */
@@ -438,8 +480,9 @@ void removeline(file_t *file, int y)
 		drawline(file, i);
 	
 	/* clear last line */
-	if(file == current && file->line_count >= file->scroll_y
-	&& file->line_count < file->scroll_y + h-1)
+	if(current >= 0 && file == files[current]
+		&& file->line_count >= file->scroll_y
+		&& file->line_count < file->scroll_y + h-1)
 	{
 		move(file->line_count - file->scroll_y + 1, 0);
 		clrtoeol();
@@ -591,12 +634,16 @@ void drawmenu()
 
 void drawpos()
 {
+	file_t *file;
+	
+	file = files[current];
+	
 	attron(COLOR_PAIR(3));
 	attron(A_BOLD);
 	
 	mvprintw(0, 55, "C: %d  L: %d/%d (%d%%)",
-		current->cursor_x+1, current->cursor_y+1,
-		current->line_count, current->cursor_y*100/current->line_count);
+		file->cursor_x+1, file->cursor_y+1,
+		file->line_count, file->cursor_y*100/file->line_count);
 	clrtoeol();
 	
 	attron(COLOR_PAIR(2));
@@ -612,7 +659,7 @@ void cursormoved(file_t *file)
 		{
 			file->scroll_y++;
 			
-			if(file == current)
+			if(current >= 0 && file == files[current])
 			{
 				/* scroll screen */
 				
@@ -639,7 +686,7 @@ void cursormoved(file_t *file)
 		{
 			file->scroll_y--;
 			
-			if(file == current)
+			if(current >= 0 && file == files[current])
 			{
 				/* scroll screen */
 				
@@ -665,11 +712,11 @@ void cursormoved(file_t *file)
 		file->sel_end_x = file->cursor_x;
 		file->sel_end_y = file->cursor_y;
 		
-		if(file == current)
+		if(current >= 0 && file == files[current])
 			drawscreen();
 	}
 	
-	if(file == current)
+	if(current >= 0 && file == files[current])
 		drawpos();
 }
 
@@ -713,6 +760,9 @@ int help_loop()
 int editor_loop()
 {
 	int ch;
+	file_t *file;
+	
+	file = files[current];
 	
 	ch = getch();
 	switch(ch)
@@ -736,10 +786,10 @@ int editor_loop()
 	
 	case KEY_F(6):
 		/* save */
-		if(current->filename[0])
+		if(file->filename[0])
 		{
-			writefile(current, current->filename);
-			current->saved = 1;
+			writefile(file, file->filename);
+			file->saved = 1;
 		}
 		break;
 	
@@ -766,15 +816,15 @@ int editor_loop()
 		break;
 	
 	case 3:			/* control-C */
-		if(current->selected)
+		if(file->selected)
 		{
 			/* TODO: copy */
 		}
 		break;
 	
 	case 11:		/* control-K */
-		if(current->line_count > 1)
-			removeline(current, current->cursor_y);
+		if(file->line_count > 1)
+			removeline(file, file->cursor_y);
 		break;
 	
 	case 22:		/* control-V */
@@ -783,221 +833,249 @@ int editor_loop()
 	
 	case 24:		/* control-X */
 		/* quit */
-		if(current->saved)
+		
+		/* TODO: check all open files */
+		
+		if(file->saved)
 			return 1;
 		break;
 		
 	case 19:		/* control-S */
-		if(current->selected)
+		if(file->selected)
 		{
 			int y;
 			
 			/* end selection */
-			current->selected = 0;
-			for(y = current->sel_begin_y; y <= current->sel_end_y; y++)
-				drawline(current, y);
+			
+			file->selected = 0;
+			for(y = file->sel_begin_y; y <= file->sel_end_y; y++)
+				drawline(file, y);
 		}
 		else
 		{
 			/* begin selection */
-			current->selected = 1;
-			current->sel_begin_x = current->cursor_x;
-			current->sel_begin_y = current->cursor_y;
-			current->sel_end_x = current->cursor_x;
-			current->sel_end_y = current->cursor_y;
+			
+			file->selected = 1;
+			file->sel_begin_x = file->cursor_x;
+			file->sel_begin_y = file->cursor_y;
+			file->sel_end_x = file->cursor_x;
+			file->sel_end_y = file->cursor_y;
 		}
 		break;
 	
 	case 21:		/* control-U */
-		if(current->selected)
+		if(file->selected)
 		{
 			int y;
 			
-			/* un-indent */
-			for(y = current->sel_begin_y; y <= current->sel_end_y; y++)
+			/* un-indent lines */
+			
+			for(y = file->sel_begin_y; y <= file->sel_end_y; y++)
 			{
-				if(current->lines[y].len && current->lines[y].buf[0] == '\t')
-					removetext(current, 0, y, 1);
+				if(file->lines[y].len && file->lines[y].buf[0] == '\t')
+					removetext(file, 0, y, 1);
 			}
 		}
 		break;
 	
 	case KEY_PPAGE:
 		/* move half screen up */
-		if(current->cursor_y)
+		if(file->cursor_y)
 		{
-			current->cursor_y -= h/2;
-			if(current->cursor_y < 0)
-				current->cursor_y = 0;
+			file->cursor_y -= h/2;
+			if(file->cursor_y < 0)
+				file->cursor_y = 0;
 			
 			/* don't go past end of line */
-			if(current->cursor_x > current->lines[current->cursor_y].len)
-				current->cursor_x = current->lines[current->cursor_y].len;
+			if(file->cursor_x > file->lines[file->cursor_y].len)
+				file->cursor_x = file->lines[file->cursor_y].len;
 		}
 		break;
 	
 	case KEY_NPAGE:
 		/* move half screen down */
-		if(current->cursor_y < current->line_count-1)
+		if(file->cursor_y < file->line_count-1)
 		{
-			current->cursor_y += h/2;
-			if(current->cursor_y > current->line_count-1)
-				current->cursor_y = current->line_count-1;
+			file->cursor_y += h/2;
+			if(file->cursor_y > file->line_count-1)
+				file->cursor_y = file->line_count-1;
 			
 			/* don't go past end of line */
-			if(current->cursor_x > current->lines[current->cursor_y].len)
-				current->cursor_x = current->lines[current->cursor_y].len;
+			if(file->cursor_x > file->lines[file->cursor_y].len)
+				file->cursor_x = file->lines[file->cursor_y].len;
 		}
 		break;
 	
 	case KEY_UP:
-		if(current->cursor_y)
+		if(file->cursor_y)
 		{
-			current->cursor_y--;
+			file->cursor_y--;
 			
 			/* don't go past end of line */
-			if(current->cursor_x > current->lines[current->cursor_y].len)
-				current->cursor_x = current->lines[current->cursor_y].len;
+			if(file->cursor_x > file->lines[file->cursor_y].len)
+				file->cursor_x = file->lines[file->cursor_y].len;
 		}
 		break;
 	
 	case KEY_DOWN:
-		if(current->cursor_y < current->line_count-1)
+		if(file->cursor_y < file->line_count-1)
 		{
-			current->cursor_y++;
+			file->cursor_y++;
 			
 			/* move cursor to line end */
-			if(current->cursor_x > current->lines[current->cursor_y].len)
-				current->cursor_x = current->lines[current->cursor_y].len;
+			if(file->cursor_x > file->lines[file->cursor_y].len)
+				file->cursor_x = file->lines[file->cursor_y].len;
 		}
 		break;
 	
 	case KEY_HOME:
 		/* go to begin of line */
-		if(current->cursor_x)
-			current->cursor_x = 0;
+		if(file->cursor_x)
+			file->cursor_x = 0;
 		break;
 	
 	case KEY_END:
 		/* go to end of line */
-		if(current->cursor_x < current->lines[current->cursor_y].len)
-			current->cursor_x = current->lines[current->cursor_y].len; 
+		if(file->cursor_x < file->lines[file->cursor_y].len)
+			file->cursor_x = file->lines[file->cursor_y].len; 
 		break;
 	
 	case KEY_LEFT:
 		/* go to left one character */
-		if(current->cursor_x)
-			current->cursor_x--;
-		else if(current->cursor_y)
+		if(file->cursor_x)
+			file->cursor_x--;
+		else if(file->cursor_y)
 		{
 			/* jump to end of previous line */
-			current->cursor_y--;
-			current->cursor_x = current->lines[current->cursor_y].len;
+			file->cursor_y--;
+			file->cursor_x = file->lines[file->cursor_y].len;
 		}
 		break;
 	
 	case KEY_RIGHT:
 		/* go right one character */
-		if(current->cursor_x < current->lines[current->cursor_y].len)
-			current->cursor_x++;
-		else if(current->cursor_y < current->line_count-1)
+		if(file->cursor_x < file->lines[file->cursor_y].len)
+			file->cursor_x++;
+		else if(file->cursor_y < file->line_count-1)
 		{
 			/* jump to begin of next line */
-			current->cursor_y++;
-			current->cursor_x = 0;
+			file->cursor_y++;
+			file->cursor_x = 0;
 		}
 		break;
 	
 	case KEY_DC:
-		if(current->selected)
+		if(file->selected)
 		{
-			current->selected = 0;
+			file->selected = 0;
 			
 			/* delete selection */
-			if(current->sel_begin_y == current->sel_end_y)
+			
+			if(file->sel_begin_y == file->sel_end_y)
 			{
-				/* selection on one line */
-				removetext(current, current->sel_begin_x, current->sel_begin_y, current->sel_end_x - current->sel_begin_x);
+				/* remove characters from current line */
+				removetext(file, file->sel_begin_x, file->sel_begin_y,
+					file->sel_end_x - file->sel_begin_x);
 			}
 			else
 			{
 				int y;
+				line_t *line;
 				
-				/* concate first and last current->lines */
-				removetext(current, current->sel_begin_x, current->sel_begin_y,
-					current->lines[current->sel_begin_y].len - current->sel_begin_x);
-				if(current->sel_end_x < current->lines[current->sel_end_y].len)
+				/* remove ending from the first line */
+				removetext(file, file->sel_begin_x, file->sel_begin_y,
+					file->lines[file->sel_begin_y].len - file->sel_begin_x);
+				
+				/* copy ending from the last line to the end of first line */
+				line = &file->lines[file->sel_end_y];
+				if(file->sel_end_x < line->len)
 				{
-					/* insert text from last line to first */
-					inserttext(current, current->sel_begin_x, current->sel_begin_y,
-						&current->lines[current->sel_end_y].buf[current->sel_end_x],
-						current->lines[current->sel_end_y].len - current->sel_end_x);
+					inserttext(file, file->sel_begin_x, file->sel_begin_y,
+						&line->buf[file->sel_end_x],
+						line->len - file->sel_end_x);
 				}
 				
-				/* remove rest of the current->lines */
-				for(y=0; y < current->sel_end_y-current->sel_begin_y; y++)
-					removeline(current, current->sel_begin_y+1);
+				/* remove all lines between the first and last line */
+				for(y=0; y < file->sel_end_y-file->sel_begin_y; y++)
+					removeline(file, file->sel_begin_y+1);
 				
-				current->cursor_x = current->sel_begin_x;
-				current->cursor_y = current->sel_begin_y;
+				file->cursor_x = file->sel_begin_x;
+				file->cursor_y = file->sel_begin_y;
 			}
 		}
-		else if(current->cursor_x < current->lines[current->cursor_y].len)
+		else if(file->cursor_x < file->lines[file->cursor_y].len)
 		{
-			/* remove character */
-			removetext(current, current->cursor_x, current->cursor_y, 1);
+			/* remove character from cursor position */
+			removetext(file, file->cursor_x, file->cursor_y, 1);
 		}
 		break;
 	
 	case KEY_BACKSPACE:
 	case '\b':
 	case 127:
-		if(current->cursor_x)
+		if(file->cursor_x)
 		{
-			/* remove character */
-			current->cursor_x--;
-			removetext(current, current->cursor_x, current->cursor_y, 1);
+			/* remove character from cursor position */
+			file->cursor_x--;
+			removetext(file, file->cursor_x, file->cursor_y, 1);
 		}
-		else if(current->cursor_y)
+		else if(file->cursor_y)
 		{
-			current->cursor_y--;
-			current->cursor_x = current->lines[current->cursor_y].len;
+			line_t *line;
 			
-			/* add text from next line */
-			if(current->lines[current->cursor_y+1].len)
+			/* move to the end of the previous line */
+			file->cursor_y--;
+			file->cursor_x = file->lines[file->cursor_y].len;
+			
+			/* copy text from the next line to the end of current line */
+			
+			line = &file->lines[file->cursor_y+1];
+			if(line->len)
 			{
-				inserttext(current, current->cursor_x, current->cursor_y, current->lines[current->cursor_y+1].buf,
-					current->lines[current->cursor_y+1].len);
+				inserttext(file, file->cursor_x, file->cursor_y,
+					line->buf, line->len);
 			}
-			/* remove next line */
-			removeline(current, current->cursor_y+1);
+			
+			/* and remove the next line */
+			removeline(file, file->cursor_y+1);
 		}
 		break;
 	
 	case '\r':
-		/* add new line */
-		insertline(current, current->cursor_y+1);
-		
-		/* move end of line to next line */
-		if(current->cursor_x < current->lines[current->cursor_y].len)
 		{
-			inserttext(current, 0, current->cursor_y+1, &current->lines[current->cursor_y].buf[current->cursor_x],
-				current->lines[current->cursor_y].len - current->cursor_x);
-			removetext(current, current->cursor_x, current->cursor_y, current->lines[current->cursor_y].len - current->cursor_x);
+			line_t *line;
+			
+			/* add new line */
+			insertline(file, file->cursor_y+1);
+			
+			line = &file->lines[file->cursor_y];
+			if(file->cursor_x < line->len)
+			{
+				/* copy ending from the current line to the next line */
+				inserttext(file, 0, file->cursor_y+1,
+					&line->buf[file->cursor_x], line->len - file->cursor_x);
+				
+				/* and remove ending from the current line */
+				removetext(file, file->cursor_x, file->cursor_y,
+					line->len - file->cursor_x);
+			}
+			
+			/* move cursor to the begin of the next line */
+			file->cursor_y++;
+			file->cursor_x = 0;
 		}
-		
-		current->cursor_y++;
-		current->cursor_x = 0;
 		break;
 	
 	case '\t':
-		if(current->selected)
+		if(file->selected)
 		{
 			int y;
 			
-			/* indent */
-			for(y = current->sel_begin_y; y <= current->sel_end_y; y++)
-				inserttext(current, 0, y, "\t", 1);
+			/* indent lines */
+			
+			for(y = file->sel_begin_y; y <= file->sel_end_y; y++)
+				inserttext(file, 0, y, "\t", 1);
+			
 			break;
 		}
 		/* fall trought */
@@ -1007,15 +1085,15 @@ int editor_loop()
 		{
 			unsigned char buf = ch;
 			
-			/* insert character */
-			inserttext(current, current->cursor_x, current->cursor_y,
+			/* insert character at cursor position */
+			inserttext(file, file->cursor_x, file->cursor_y,
 				(const char *)&buf, 1);
-			current->cursor_x++;
+			file->cursor_x++;
 		}
 		break;
 	}
 	
-	cursormoved(current);
+	cursormoved(file);
 	
 	setcursor();
 	refresh();
@@ -1034,17 +1112,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	
-	file = malloc(sizeof(file_t));
+	newfile();
 	
-	file->lines = NULL;
-	file->line_count = 0;
-	file->line_allocated = 0;
-	
-	file->cursor_x = 0;
-	file->cursor_y = 0;
-	file->scroll_y = 0;
-	
-	file->selected = 0;
+	file = files[0];
 	
 	if(argc == 2)
 	{
@@ -1057,14 +1127,14 @@ int main(int argc, char **argv)
 	
 	file->saved = 1;
 	
+	current = 0;
+	
 	/* make sure we got something */
 	if(!file->line_count)
 		insertline(file, 0);
 	
 	file->cursor_x = 0;
 	file->cursor_y = 0;
-	
-	current = file;
 	
 	tcgetattr(0, &term_saved);
 	
